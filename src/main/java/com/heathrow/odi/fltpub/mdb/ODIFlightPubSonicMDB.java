@@ -11,38 +11,87 @@ public class ODIFlightPubSonicMDB implements MessageListener {
 
     private Logger logger = Logger.getLogger(ODIFlightPubSonicMDB.class);
 
+    private String topicName = null;
+    private String tcfName = null;
+    private Topic ouboundTopic = null;
+    private TopicConnectionFactory outboundTcf = null;
+
+    public ODIFlightPubSonicMDB() {
+        System.out.println("ODIFlightPubSonicMDB.constructor");
+    }
+
     @Override
     public void onMessage(Message message) {
         logger.debug("onMessage fired");
-        System.out.println("onMessage fired");
 
         // create internal (WebLogic) context
         Context ctx = null;
 
         try {
-            if (message instanceof TextMessage) {
-                System.out.println("message: " + ((TextMessage)message).getText());
-            }
             // create internal (WebLogic) context
             ctx = new InitialContext();
-            // retrieve topic connection factory, configured in ejb-jar.xml
-            TopicConnectionFactory tcf = (TopicConnectionFactory)
-                    ctx.lookup("java:comp/env/WLFlightPubTCF");
             // lookup Topic, configured in ejb-jar.xml
-            Topic destination = (Topic)
-                    ctx.lookup("java:comp/env/WLFlightPubTopic");
-            // create topic connection
-            TopicConnection connection = tcf.createTopicConnection();
+            if (topicName == null || ouboundTopic == null) {
+                topicName = (String)ctx.lookup("java:comp/env/WLFlightPubTopic");
+                ouboundTopic = (Topic) ctx.lookup(topicName);
+                logger.debug("Topic {" + topicName + "} lookup ok");
+            }
+            if (tcfName == null || outboundTcf == null) {
+                // retrieve topic connection factory, configured in ejb-jar.xml
+                tcfName = (String)ctx.lookup("java:comp/env/WLFlightPubTCF");
+                outboundTcf = (TopicConnectionFactory)ctx.lookup(tcfName);
+                logger.debug("TopicConnectionFactory {" + tcfName + "} lookup ok");
+            }
+
+            // create a topic connection
+            TopicConnection topicConnection = outboundTcf.createTopicConnection();
+            logger.debug("Created TopicConnection");
+
             // create JMS session
-            Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
-            // start connection
-            connection.start();
-            // message producer
-            MessageProducer producer = session.createProducer(destination);
-            // send the message
-            System.out.println("sending message to Topic [" + destination.getTopicName() + "]");
-            logger.debug("sending message to Topic [" + destination.getTopicName() + "]");
-            producer.send(message);
+            TopicSession topicSession = topicConnection.createTopicSession(false,
+                    Session.AUTO_ACKNOWLEDGE);
+            logger.debug("Created TopicSession");
+
+            // create topic publisher
+            TopicPublisher topicPublisher = topicSession.createPublisher(ouboundTopic);
+            logger.debug("Created TopicPublisher");
+
+            // copy message into new TextMessage
+            TextMessage outMessage = topicSession.createTextMessage();
+            if (message instanceof TextMessage) {
+                TextMessage inMessage = (TextMessage)message;
+                // set message text
+                outMessage.setText(inMessage.getText());
+                // set JMS properties
+                outMessage.setJMSCorrelationID(
+                        inMessage.getJMSCorrelationID());
+                outMessage.setJMSCorrelationIDAsBytes(
+                        inMessage.getJMSCorrelationIDAsBytes());
+                outMessage.setJMSDeliveryMode(
+                        inMessage.getJMSDeliveryMode());
+                outMessage.setJMSDestination(
+                        inMessage.getJMSDestination());
+                outMessage.setJMSExpiration(
+                        inMessage.getJMSExpiration());
+                outMessage.setJMSMessageID(
+                        inMessage.getJMSMessageID());
+                outMessage.setJMSPriority(
+                        inMessage.getJMSPriority());
+                outMessage.setJMSRedelivered(
+                        inMessage.getJMSRedelivered());
+                outMessage.setJMSReplyTo(
+                        inMessage.getJMSReplyTo());
+                outMessage.setJMSTimestamp(
+                        inMessage.getJMSTimestamp());
+                outMessage.setJMSType(
+                        inMessage.getJMSType());
+                // other properties
+            }
+
+            // publish the message to the topic
+            topicPublisher.publish(outMessage);
+            logger.debug("Sent message to Topic [" +
+                    ouboundTopic.getTopicName() + "]");
 
         } catch (NamingException e) {
             logger.error("NamingException: error: " + e.getMessage());
